@@ -1,0 +1,14 @@
+.env
+.env.local
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.next/
+storage/
+test-results/
+playwright-report/
+*.log
+# Playwright CLI output (may contain credentials)
+.playwright-cli/
+*.egg-info/

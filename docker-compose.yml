@@ -1,0 +1,64 @@
+# Local stack: PostgreSQL, API, web, and a job runner. Copy .env.example to .env first.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: roanwick
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: roanwick
+    volumes: [dbdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roanwick"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build: ./backend
+    command: sh -c "alembic upgrade head && python -m app.seed"
+    environment: &api-env
+      DATABASE_URL: postgresql+psycopg://roanwick:${POSTGRES_PASSWORD}@db:5432/roanwick
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (32+ random characters)}
+      ENV: ${ENV:-development}
+      CORS_ORIGINS: ${PUBLIC_WEB_URL:-http://localhost:3000}
+      PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-sandbox}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      SANDBOX_WEBHOOK_SECRET: ${SANDBOX_WEBHOOK_SECRET:-sandbox-webhook-secret-change-me}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-console}
+      STORAGE_DIR: /srv/storage
+      SEED_DEMO: ${SEED_DEMO:-0}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+    volumes: [uploads:/srv/storage]
+    depends_on:
+      db: { condition: service_healthy }
+
+  api:
+    build: ./backend
+    environment: *api-env
+    volumes: [uploads:/srv/storage]
+    ports: ["8000:8000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  jobs:
+    build: ./backend
+    # Every five minutes: expire holds, re-match, generate plan visits, release payouts, send notifications.
+    command: sh -c "while true; do python -m app.jobs; sleep 300; done"
+    environment: *api-env
+    volumes: [uploads:/srv/storage]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  web:
+    build:
+      context: ./web
+      args:
+        API_URL: http://api:8000
+    ports: ["3000:3000"]
+    depends_on: [api]
+
+volumes:
+  dbdata:
+  uploads:
